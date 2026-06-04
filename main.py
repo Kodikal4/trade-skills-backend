@@ -12,13 +12,9 @@ app = FastAPI(title="Trade Skills Diagnostic API")
 # 🔐 CORS Configuration - Allows your GitHub Pages frontend to access this API securely
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://kodikal4.github.io",  # Your production frontend
-        "http://127.0.0.1:5500",       # Local Live Server for development
-        "http://localhost:3000"
-    ],
+    allow_origins=["*"],  # Allows all websites/computers to view quiz data
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["*"],  # Allows GET, POST, and configuration requests
     allow_headers=["*"],
 )
 
@@ -116,3 +112,7 @@ def get_diagnostic_challenge(track: Optional[str] = None, conn = Depends(get_db)
         filtered_mocks = MOCK_CHALLENGES
 
     return random.choice(filtered_mocks)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000)
