@@ -40,7 +40,7 @@ class ChoiceSchema(BaseModel):
 
 class ChallengeSchema(BaseModel):
     id: int
-    track: str
+    trade: str  # Changed from track to trade
     component: str
     symptom: str
     question: str
@@ -70,19 +70,17 @@ MOCK_CHALLENGES = [
 def read_root():
     return {"status": "online", "message": "Welcome to the Trade Skills API Container"}
 
-@app.get("/diagnostic-challenge", response_model=ChallengeSchema)
-def get_diagnostic_challenge(track: Optional[str] = None, conn = Depends(get_db)):
+@app.get("/get-challenge")
+def get_diagnostic_challenge(trade: Optional[str] = None, conn = Depends(get_db)):
     """
     Fetches a randomized diagnostic challenge. 
-    Attempts to pull from PostgreSQL first, falls back to randomized mock data if DB is unavailable.
     """
-    # PATH A: If Database is configured and active
+    # ... inside your code, update your references from 'track' to 'trade' ...
     if conn is not None:
         try:
             with conn.cursor() as cursor:
-                # Query to get a randomized challenge based on track selection
-                if track:
-                    cursor.execute("SELECT * FROM challenges WHERE track = %s ORDER BY RANDOM() LIMIT 1;", (track,))
+                if trade:
+                    cursor.execute("SELECT * FROM challenges WHERE track = %s ORDER BY RANDOM() LIMIT 1;", (trade,))
                 else:
                     cursor.execute("SELECT * FROM challenges ORDER BY RANDOM() LIMIT 1;")
                 
@@ -91,7 +89,6 @@ def get_diagnostic_challenge(track: Optional[str] = None, conn = Depends(get_db)
                 if not challenge:
                     raise HTTPException(status_code=404, detail="No challenges found in database.")
                 
-                # Fetch matching choices for the selected challenge
                 cursor.execute("SELECT id, text, is_correct FROM choices WHERE challenge_id = %s;", (challenge['id'],))
                 choices = cursor.fetchall()
                 
@@ -102,13 +99,13 @@ def get_diagnostic_challenge(track: Optional[str] = None, conn = Depends(get_db)
         finally:
             conn.close()
 
-    # PATH B: Fallback Engine (Runs when DATABASE_URL is not hooked up yet)
+    # PATH B: Fallback Engine
     filtered_mocks = MOCK_CHALLENGES
-    if track:
-        filtered_mocks = [c for c in MOCK_CHALLENGES if c["track"].lower() == track.lower()]
+    if trade:
+        # Note: Your mock data uses "Heavy Equipment Diesel", so let's make it a partial match
+        filtered_mocks = [c for c in MOCK_CHALLENGES if trade.lower() in c["track"].lower()]
     
     if not filtered_mocks:
-        # If no tracks match, just give a random choice from all available mocks
         filtered_mocks = MOCK_CHALLENGES
 
     return random.choice(filtered_mocks)
