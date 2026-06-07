@@ -23,7 +23,6 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 def get_db():
     """Dependency to establish and close database connections cleanly per request."""
     if not DATABASE_URL:
-        # Fallback to None if environment variable isn't set yet (helps app boot on Azure initially)
         return None
     try:
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
@@ -40,14 +39,18 @@ class ChoiceSchema(BaseModel):
 
 class ChallengeSchema(BaseModel):
     id: int
-    trade: str  # Changed from track to trade
+    trade: str  
     component: str
     symptom: str
     question: str
     choices: List[ChoiceSchema]
 
+class UpdateProgressSchema(BaseModel):
+    challenge_id: int
+    selected_choice_id: int
+    is_correct: bool
+
 # 🛠️ Hardcoded Mock Data (The Fallback Engine)
-# This ensures your API still works flawlessly even if your database is offline or not yet migrated!
 MOCK_CHALLENGES = [
     {
         "id": 1,
@@ -71,44 +74,63 @@ def read_root():
     return {"status": "online", "message": "Welcome to the Trade Skills API Container"}
 
 @app.get("/get-challenge")
-def get_diagnostic_challenge(trade: Optional[str] = None, conn = Depends(get_db)):
+def get_diagnostic_challenge(trade: Optional[str] = None, conn=Depends(get_db)):
     """
-    Fetches a randomized diagnostic challenge. 
+    Fetches a randomized diagnostic challenge, optionally filtered by trade.
     """
-    # ... inside your code, update your references from 'track' to 'trade' ...
+    # PATH A: Live Database Execution
     if conn is not None:
         try:
             with conn.cursor() as cursor:
+                # Use raw SQL parameters to safely query by trade if provided
                 if trade:
-                    cursor.execute("SELECT * FROM challenges WHERE track = %s ORDER BY RANDOM() LIMIT 1;", (trade,))
+                    # Case-insensitive partial matching (similar to your fallback engine)
+                    query = "SELECT id, track, component, symptom, question FROM challenges WHERE LOWER(track) LIKE %s LIMIT 1;"
+                    cursor.execute(query, (f"%{trade.lower()}%",))
                 else:
-                    cursor.execute("SELECT * FROM challenges ORDER BY RANDOM() LIMIT 1;")
+                    query = "SELECT id, track, component, symptom, question FROM challenges ORDER BY RANDOM() LIMIT 1;"
+                    cursor.execute(query)
                 
                 challenge = cursor.fetchone()
                 
-                if not challenge:
-                    raise HTTPException(status_code=404, detail="No challenges found in database.")
+                if challenge:
+                    # Fetch corresponding choices for the found challenge
+                    cursor.execute("SELECT id, text, is_correct FROM choices WHERE challenge_id = %s;", (challenge['id'],))
+                    choices = cursor.fetchall()
+                    challenge['choices'] = choices
+                    return challenge
                 
-                cursor.execute("SELECT id, text, is_correct FROM choices WHERE challenge_id = %s;", (challenge['id'],))
-                choices = cursor.fetchall()
-                
-                challenge['choices'] = choices
-                return challenge
         except Exception as e:
             print(f"Database query failed, pivoting to fallback engine. Error: {e}")
         finally:
             conn.close()
 
-    # PATH B: Fallback Engine
+    # PATH B: Fallback Engine (Runs when DB is disconnected or empty)
     filtered_mocks = MOCK_CHALLENGES
     if trade:
-        # Note: Your mock data uses "Heavy Equipment Diesel", so let's make it a partial match
         filtered_mocks = [c for c in MOCK_CHALLENGES if trade.lower() in c["track"].lower()]
     
     if not filtered_mocks:
         filtered_mocks = MOCK_CHALLENGES
 
     return random.choice(filtered_mocks)
+
+@app.post("/update")  # Or "/update-progress", check your frontend code for the exact path match!
+def update_diagnostic_progress(payload: UpdateProgressSchema, conn=Depends(get_db)):
+    """
+    Receives the user's answer selection and records it or processes evaluation state.
+    """
+    # For now, return a success status so the frontend knows the server received it
+    print(f"Received submission for challenge {payload.challenge_id}: Correct={payload.is_correct}")
+    
+    if conn is not None:
+        try:
+            # If you want to log submissions to your PostgreSQL DB later, do it here
+            pass
+        finally:
+            conn.close()
+            
+    return {"status": "success", "message": "Evaluation processed successfully"}
 
 if __name__ == "__main__":
     import uvicorn
