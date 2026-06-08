@@ -1,7 +1,7 @@
 import os
 import random
 from typing import List, Optional
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import psycopg2
@@ -21,7 +21,7 @@ app.add_middleware(
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 def get_db():
-    """Dependency to establish and close database connections cleanly per request."""
+    """Establishes and returns a database connection using RealDictCursor."""
     if not DATABASE_URL:
         return None
     try:
@@ -37,25 +37,6 @@ class ProgressPayloadSchema(BaseModel):
     trade: str
     is_correct: bool
 
-# 🛠️ Hardcoded Mock Data matching frontend properties
-MOCK_CHALLENGES = [
-    {
-        "id": 1,
-        "track": "Diesel",
-        "component": "Intake Air Throttle Valve",
-        "symptom": "Black smoke under load and low boost pressure tracking.",
-        "question": "Which of the following is the most likely root cause?",
-        "failure_mode": "Intake air throttle valve actuator linkage bound closed",
-        "explanation": "A bound closed throttle linkage restricts fresh air intake, causing incomplete combustion (black smoke) and reduced turbo boost pressure tracking.",
-        "choices": [
-            {"text": "Stuck open EGR valve"},
-            {"text": "Intake air throttle valve actuator linkage bound closed"},
-            {"text": "Faulty rail pressure sensor readings"},
-            {"text": "Leaking variable geometry turbocharger actuator"}
-        ]
-    }
-]
-
 # 🚀 API Endpoints
 
 @app.get("/")
@@ -65,7 +46,24 @@ def read_root():
 @app.get("/get-challenge")
 def get_challenge(trade: str = "Diesel", exclude_ids: Optional[str] = Query(None)):
     try:
-        conn = get_db_connection()
+        conn = get_db()
+        if not conn:
+            # Fallback to local standardized mock mock payload if DB is unconfigured
+            return {
+                "id": 1,
+                "component": "Intake Air Throttle Valve",
+                "symptom": "Black smoke under load and low boost pressure tracking.",
+                "question": "Which of the following is the most likely root cause?",
+                "failure_mode": "Intake air throttle valve actuator linkage bound closed",
+                "explanation": "A bound closed throttle linkage restricts fresh air intake, causing incomplete combustion (black smoke) and reduced turbo boost pressure tracking.",
+                "choices": [
+                    "Stuck open EGR valve",
+                    "Intake air throttle valve actuator linkage bound closed",
+                    "Faulty rail pressure sensor readings",
+                    "Leaking variable geometry turbocharger actuator"
+                ]
+            }
+
         cur = conn.cursor()
 
         id_list = []
@@ -91,20 +89,25 @@ def get_challenge(trade: str = "Diesel", exclude_ids: Optional[str] = Query(None
             return {"no_remaining_data": True, "error": "All unique challenges seen."}
         
         if row:
-            # 2. Dynamic Option Generation: Fetch other failure modes in this sector to act as distractors
+            # 2. Dynamic Option Generation (RealDictCursor maps row values by name)
             distractor_query = "SELECT DISTINCT failure_mode FROM diagnostic_challenges WHERE trade_type = %s AND failure_mode != %s ORDER BY RANDOM() LIMIT 3;"
-            cur.execute(distractor_query, (trade, row[2]))
-            distractors = [r[0] for r in cur.fetchall()]
+            cur.execute(distractor_query, (trade, row["failure_mode"]))
+            distractors = [r["failure_mode"] for r in cur.fetchall()]
             
             # Combine correct answer with distractors and randomize their order
-            choices = distractors + [row[2]]
-            import random
+            choices = distractors + [row["failure_mode"]]
             random.shuffle(choices)
 
-            # Process payload
-            processed = diagnostic.process_engine_data(row[:-1])
-            processed["id"] = row[-1]
-            processed["choices"] = choices  # Inject the unique dynamic choices here!
+            # Assemble direct frontend structured payload safely mapping dictionary variables
+            processed = {
+                "id": row["id"],
+                "component": row["component"],
+                "symptom": "SYMPTOM: " + row["symptom"],
+                "question": "Which of the following is the most likely root cause?",
+                "failure_mode": row["failure_mode"],
+                "explanation": row["explanation"] or "Diagnostic evaluation complete.",
+                "choices": choices
+            }
             
             cur.close()
             conn.close()
@@ -126,4 +129,4 @@ def update_diagnostic_progress(payload: ProgressPayloadSchema):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
