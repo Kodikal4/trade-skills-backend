@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
+import pymssql
 
 app = FastAPI(title="Trade Skills Diagnostic API")
 
@@ -19,22 +20,29 @@ app.add_middleware(
 )
 
 def get_db():
-    """Establishes and returns a database connection using live environment variables."""
+    """Establishes and returns an Azure SQL database connection using pymssql."""
     try:
-        # Check if a unified connection string exists first
-        database_url = os.getenv("DATABASE_URL")
-        if database_url:
-            conn = psycopg2.connect(database_url, cursor_factory=RealDictCursor)
-            return conn
+        # Pull environment variables from your App Service settings console
+        host = os.getenv("DB_HOST")
+        database = os.getenv("DB_NAME")
+        user = os.getenv("DB_USER")
+        password = os.getenv("DB_PASSWORD")
         
-        # Otherwise, reconstruct from individual App Service settings
-        conn = psycopg2.connect(
-            host=os.getenv("DB_HOST", "localhost"),
-            database=os.getenv("DB_NAME", "diesel_startup"),
-            user=os.getenv("DB_USER", "postgres"),
-            password=os.getenv("DB_PASSWORD", "postgre4231"),  
-            port=os.getenv("DB_PORT", "5432"),
-            cursor_factory=RealDictCursor
+        # Guard clause if variables aren't loaded yet
+        if not host or not database:
+            print("Database configuration variables are missing.")
+            return None
+
+        # Clean host string to guarantee there are no trailing slashes or protocols
+        host_clean = host.replace("https://", "").replace("http://", "").split("/")[0]
+
+        # Connect using the pure Python driver
+        conn = pymssql.connect(
+            server=host_clean,
+            user=user,
+            password=password,
+            database=database,
+            timeout=10
         )
         return conn
     except Exception as e:
@@ -88,7 +96,7 @@ def get_challenge(trade: str = "Diesel", exclude_ids: Optional[str] = Query(None
                 "choices": ["Stuck open EGR valve", "Intake air throttle valve actuator linkage bound closed", "Faulty rail pressure sensor readings", "Leaking variable geometry turbocharger actuator"]
             }
 
-        cur = conn.cursor()
+        cur = conn.cursor(as_dict=True)
 
         id_list = []
         if exclude_ids:
@@ -99,7 +107,7 @@ def get_challenge(trade: str = "Diesel", exclude_ids: Optional[str] = Query(None
         params = [trade_clean]
         
         if id_list:
-            placeholders = ",".join(["%s"] * len(id_list))
+            placeholders = ",".join(["%d" if isinstance(x, int) else "%s" for x in id_list])
             query += f" AND id NOT IN ({placeholders})"
             params.extend(id_list)
             
