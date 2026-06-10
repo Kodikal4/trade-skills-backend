@@ -18,14 +18,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-
 def get_db():
-    """Establishes and returns a database connection using RealDictCursor."""
-    if not DATABASE_URL:
-        return None
+    """Establishes and returns a database connection using live environment variables."""
     try:
-        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        # Check if a unified connection string exists first
+        database_url = os.getenv("DATABASE_URL")
+        if database_url:
+            conn = psycopg2.connect(database_url, cursor_factory=RealDictCursor)
+            return conn
+        
+        # Otherwise, reconstruct from individual App Service settings
+        conn = psycopg2.connect(
+            host=os.getenv("DB_HOST", "localhost"),
+            database=os.getenv("DB_NAME", "diesel_startup"),
+            user=os.getenv("DB_USER", "postgres"),
+            password=os.getenv("DB_PASSWORD", "postgre4231"),  
+            port=os.getenv("DB_PORT", "5432"),
+            cursor_factory=RealDictCursor
+        )
         return conn
     except Exception as e:
         print(f"Database connection error: {e}")
@@ -46,22 +56,30 @@ def read_root():
 @app.get("/get-challenge")
 def get_challenge(trade: str = "Diesel", exclude_ids: Optional[str] = Query(None)):
     try:
+        # 🧹 STRIP & REFORMAT DISPATCH STRINGS FROM FRONTEND DROPDOWN
+        trade_clean = trade.strip()
+        
+        if "LINEMAN" in trade_clean.upper() or trade_clean.lower() == "lineman":
+            trade_clean = "Lineman"
+        elif "DIESEL" in trade_clean.upper() or trade_clean.lower() == "diesel":
+            trade_clean = "Diesel"
+        elif "HVAC" in trade_clean.upper() or trade_clean.lower() == "hvac":
+            trade_clean = "HVAC"
+        elif "POWER" in trade_clean.upper() or "PLANT" in trade_clean.upper() or trade_clean.lower() == "powerplant":
+            trade_clean = "PowerPlant"
+        elif "AUTOMATION" in trade_clean.upper() or "PLC" in trade_clean.upper() or trade_clean.lower() == "automation":
+            trade_clean = "Automation"
+
         conn = get_db()
         if not conn:
-            # Fallback to local standardized mock mock payload if DB is unconfigured
             return {
                 "id": 1,
-                "component": "Intake Air Throttle Valve",
+                "component": "Intake Air Throttle Valve (Fallback Mode)",
                 "symptom": "Black smoke under load and low boost pressure tracking.",
                 "question": "Which of the following is the most likely root cause?",
                 "failure_mode": "Intake air throttle valve actuator linkage bound closed",
-                "explanation": "A bound closed throttle linkage restricts fresh air intake, causing incomplete combustion (black smoke) and reduced turbo boost pressure tracking.",
-                "choices": [
-                    "Stuck open EGR valve",
-                    "Intake air throttle valve actuator linkage bound closed",
-                    "Faulty rail pressure sensor readings",
-                    "Leaking variable geometry turbocharger actuator"
-                ]
+                "explanation": "A bound closed throttle linkage restricts fresh air intake.",
+                "choices": ["Stuck open EGR valve", "Intake air throttle valve actuator linkage bound closed", "Faulty rail pressure sensor readings", "Leaking variable geometry turbocharger actuator"]
             }
 
         cur = conn.cursor()
@@ -70,9 +88,9 @@ def get_challenge(trade: str = "Diesel", exclude_ids: Optional[str] = Query(None
         if exclude_ids:
             id_list = [int(x) for x in exclude_ids.split(",") if x.strip().isdigit()]
 
-        # 1. Fetch the primary challenge row
-        query = "SELECT component, symptom, failure_mode, explanation, trade_type, id FROM diagnostic_challenges WHERE trade_type = %s"
-        params = [trade]
+        # 🎯 USE THE SANITIZED CATEGORY VALUE HERE:
+        query = "SELECT id, component, symptom, question, failure_mode, explanation, choices FROM diagnostic_challenges WHERE trade_type = %s"
+        params = [trade_clean]
         
         if id_list:
             placeholders = ",".join(["%s"] * len(id_list))
@@ -89,33 +107,27 @@ def get_challenge(trade: str = "Diesel", exclude_ids: Optional[str] = Query(None
             return {"no_remaining_data": True, "error": "All unique challenges seen."}
         
         if row:
-            # 2. Dynamic Option Generation (RealDictCursor maps row values by name)
-            distractor_query = "SELECT DISTINCT failure_mode FROM diagnostic_challenges WHERE trade_type = %s AND failure_mode != %s ORDER BY RANDOM() LIMIT 3;"
-            cur.execute(distractor_query, (trade, row["failure_mode"]))
-            distractors = [r["failure_mode"] for r in cur.fetchall()]
-            
-            # Combine correct answer with distractors and randomize their order
-            choices = distractors + [row["failure_mode"]]
-            random.shuffle(choices)
-
-            # Assemble direct frontend structured payload safely mapping dictionary variables
             processed = {
                 "id": row["id"],
                 "component": row["component"],
                 "symptom": "SYMPTOM: " + row["symptom"],
-                "question": "Which of the following is the most likely root cause?",
+                "question": row["question"] or "Which of the following is the most likely root cause?",
                 "failure_mode": row["failure_mode"],
                 "explanation": row["explanation"] or "Diagnostic evaluation complete.",
-                "choices": choices
+                "choices": row["choices"]  
             }
-            
+
+            print(f"\n[FETCHED CHALLENGE] Component: {processed['component']}")
+            print(f" -> {processed['symptom']}")
+            print(f" -> Choices: {processed['choices']}\n")
+
             cur.close()
             conn.close()
             return processed
             
         cur.close()
         conn.close()
-        return {"error": "No challenges found."}
+        return {"error": f"No challenges found for trade category: '{trade_clean}'"}
     except Exception as e:
         return {"error": str(e)}
 
