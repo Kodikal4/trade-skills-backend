@@ -72,13 +72,19 @@ def get_challenge(trade: str = "Diesel", exclude_ids: Optional[str] = Query(None
 
         conn = get_db()
         if not conn:
+            # 🔍 FORCE AZURE TO PRINT THE ACTUAL ERROR TRACE OUT TO THE WEB SCREEN
+            import sys
+            import traceback
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            err_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+            
             return {
                 "id": 1,
                 "component": "Intake Air Throttle Valve (Fallback Mode)",
                 "symptom": "Black smoke under load and low boost pressure tracking.",
                 "question": "Which of the following is the most likely root cause?",
-                "failure_mode": "Intake air throttle valve actuator linkage bound closed",
-                "explanation": "A bound closed throttle linkage restricts fresh air intake.",
+                "failure_mode": f"Database Connection Refused. System Info: {str(exc_value)}",
+                "explanation": f"DEBUG TRACE: {err_msg if exc_value else 'Check Azure Environment Variables or Database Firewall settings.'}",
                 "choices": ["Stuck open EGR valve", "Intake air throttle valve actuator linkage bound closed", "Faulty rail pressure sensor readings", "Leaking variable geometry turbocharger actuator"]
             }
 
