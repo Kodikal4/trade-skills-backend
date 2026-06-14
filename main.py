@@ -19,32 +19,29 @@ app.add_middleware(
 )
 
 def get_db():
-    """Establishes and returns a PostgreSQL flexible server connection using psycopg2."""
+    """Establishes and returns a database connection using psycopg2."""
     try:
-        # Pull environment variables from your App Service settings console
         host = os.getenv("DB_HOST")
         database = os.getenv("DB_NAME")
         user = os.getenv("DB_USER")
         password = os.getenv("DB_PASSWORD")
         
-        # Guard clause if variables aren't loaded yet
         if not host or not database:
             print("Database configuration variables are missing.")
             return None
 
         # Clean host string to guarantee there are no trailing slashes or protocols
         host_clean = host.replace("https://", "").replace("http://", "").split("/")[0]
-
-        # Connect using the proper PostgreSQL driver over our private network bridge
+        
+        # Connect using PostgreSQL protocol
         conn = psycopg2.connect(
             host=host_clean,
             database=database,
             user=user,
-            password=password,
-            sslmode="require",  # Azure PostgreSQL strictly requires SSL encryption
-            connect_timeout=10
+            password=password
         )
         return conn
+        
     except Exception as e:
         print(f"Database connection error: {e}")
         return None
@@ -64,7 +61,6 @@ def read_root():
 @app.get("/get-challenge")
 def get_challenge(trade: str = "Diesel", exclude_ids: Optional[str] = Query(None)):
     try:
-        # 🧹 STRIP & REFORMAT DISPATCH STRINGS FROM FRONTEND DROPDOWN
         trade_clean = trade.strip()
         
         if "LINEMAN" in trade_clean.upper() or trade_clean.lower() == "lineman":
@@ -80,7 +76,6 @@ def get_challenge(trade: str = "Diesel", exclude_ids: Optional[str] = Query(None
 
         conn = get_db()
         if not conn:
-            # 🔍 FORCE AZURE TO PRINT THE ACTUAL ERROR TRACE OUT TO THE WEB SCREEN
             import sys
             import traceback
             exc_type, exc_value, exc_traceback = sys.exc_info()
@@ -96,14 +91,13 @@ def get_challenge(trade: str = "Diesel", exclude_ids: Optional[str] = Query(None
                 "choices": ["Stuck open EGR valve", "Intake air throttle valve actuator linkage bound closed", "Faulty rail pressure sensor readings", "Leaking variable geometry turbocharger actuator"]
             }
 
-        # Use RealDictCursor so rows are returned as dictionary objects matching your expectations
+        # Set up dictionary cursor for psycopg2
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
         id_list = []
         if exclude_ids:
             id_list = [int(x) for x in exclude_ids.split(",") if x.strip().isdigit()]
 
-        # 🎯 PostgreSQL uses %s for placeholders, not %d
         query = "SELECT id, component, symptom, question, failure_mode, explanation, choices FROM diagnostic_challenges WHERE trade_type = %s"
         params = [trade_clean]
         
@@ -132,10 +126,6 @@ def get_challenge(trade: str = "Diesel", exclude_ids: Optional[str] = Query(None
                 "choices": row["choices"]  
             }
 
-            print(f"\n[FETCHED CHALLENGE] Component: {processed['component']}")
-            print(f" -> {processed['symptom']}")
-            print(f" -> Choices: {processed['choices']}\n")
-
             cur.close()
             conn.close()
             return processed
@@ -146,11 +136,9 @@ def get_challenge(trade: str = "Diesel", exclude_ids: Optional[str] = Query(None
     except Exception as e:
         return {"error": str(e)}
 
-# 🎯 Target Route matching the frontend's fetch call precisely
 @app.post("/update-progress")
 @app.post("/update-progress/")
 def update_diagnostic_progress(payload: ProgressPayloadSchema):
-    """Logs telemetry evaluation results seamlessly."""
     print(f"Telemetry update received: Sector={payload.trade} | Success Status={payload.is_correct}")
     return {"status": "success", "message": "Telemetry profile adjusted successfully."}
 
