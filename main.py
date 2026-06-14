@@ -19,7 +19,7 @@ app.add_middleware(
 )
 
 def get_db():
-    """Establishes and returns an Azure SQL database connection using pymssql."""
+    """Establishes and returns a PostgreSQL flexible server connection using psycopg2."""
     try:
         # Pull environment variables from your App Service settings console
         host = os.getenv("DB_HOST")
@@ -35,13 +35,14 @@ def get_db():
         # Clean host string to guarantee there are no trailing slashes or protocols
         host_clean = host.replace("https://", "").replace("http://", "").split("/")[0]
 
-        # Connect using the pure Python driver
-        conn = pymssql.connect(
-            server=host_clean,
+        # Connect using the proper PostgreSQL driver over our private network bridge
+        conn = psycopg2.connect(
+            host=host_clean,
+            database=database,
             user=user,
             password=password,
-            database=database,
-            timeout=10
+            sslmode="require",  # Azure PostgreSQL strictly requires SSL encryption
+            connect_timeout=10
         )
         return conn
     except Exception as e:
@@ -95,18 +96,19 @@ def get_challenge(trade: str = "Diesel", exclude_ids: Optional[str] = Query(None
                 "choices": ["Stuck open EGR valve", "Intake air throttle valve actuator linkage bound closed", "Faulty rail pressure sensor readings", "Leaking variable geometry turbocharger actuator"]
             }
 
-        cur = conn.cursor(as_dict=True)
+        # Use RealDictCursor so rows are returned as dictionary objects matching your expectations
+        cur = conn.cursor(cursor_factory=RealDictCursor)
 
         id_list = []
         if exclude_ids:
             id_list = [int(x) for x in exclude_ids.split(",") if x.strip().isdigit()]
 
-        # 🎯 USE THE SANITIZED CATEGORY VALUE HERE:
+        # 🎯 PostgreSQL uses %s for placeholders, not %d
         query = "SELECT id, component, symptom, question, failure_mode, explanation, choices FROM diagnostic_challenges WHERE trade_type = %s"
         params = [trade_clean]
         
         if id_list:
-            placeholders = ",".join(["%d" if isinstance(x, int) else "%s" for x in id_list])
+            placeholders = ",".join(["%s" for _ in id_list])
             query += f" AND id NOT IN ({placeholders})"
             params.extend(id_list)
             
