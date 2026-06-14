@@ -6,7 +6,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
-import pymssql
 
 app = FastAPI(title="Trade Skills Diagnostic API")
 
